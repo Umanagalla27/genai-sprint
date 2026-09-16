@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 from groq import Groq, APIError
+from fastapi.responses import StreamingResponse
+from typing import Generator
 
 load_dotenv()
 
@@ -101,3 +103,39 @@ def summarize(request: SummarizeRequest) -> SummarizeResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal processing failure: {str(e)}"
         )
+
+def stream_llm_tokens(topic: str, model: str) -> Generator[str, None, None]:
+    """Generates chunks of text as they arrive from the LLM."""
+    system_prompt = (
+        "You are an executive AI assistant. Summarize the user's topic in exactly "
+        "3 concise, high-impact bullet points. Each bullet must be under 25 words."
+    )
+    user_prompt = f"Topic to summarize: {topic}"
+
+    try:
+        stream = client.chat.completions.create(
+            model=model,
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            stream=True,  # Enables chunk-by-chunk streaming
+        )
+        for chunk in stream:
+            token = chunk.choices[0].delta.content
+            if token:
+                yield token
+    except Exception as e:
+        yield f"\n[Streaming Error: {str(e)}]"
+
+@app.post("/summarize/stream", tags=["GenAI"])
+def summarize_stream(request: SummarizeRequest):
+    """Stream summary tokens in real time using Server-Sent Events."""
+    if client is None:
+        raise HTTPException(status_code=500, detail="LLM Client uninitialized")
+
+    return StreamingResponse(
+        stream_llm_tokens(request.topic, request.model),
+        media_type="text/event-stream"
+    )
