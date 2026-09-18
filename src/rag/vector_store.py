@@ -60,3 +60,25 @@ class QdrantVectorStore:
         """Return total number of points in the collection."""
         res = self.client.count(collection_name=self.collection_name)
         return res.count
+
+    def search(self, query_vector: List[float], limit: int = 3) -> List[Dict[str, Any]]:
+        """
+        Search for top-k closest vectors using Cosine similarity.
+        Returns list of payload dictionaries with relevance score.
+        """
+        results = self.client.query_points(
+            collection_name=self.collection_name,
+            query=query_vector,
+            limit=limit,
+        )
+        hits = []
+        for point in results.points:
+            hits.append({
+                "score": point.score,
+                "doc_id": point.payload.get("doc_id"),
+                "chunk_id": point.payload.get("chunk_id"),
+                "content": point.payload.get("content"),
+                "metadata": {k: v for k, v in point.payload.items() if k not in ["content", "doc_id", "chunk_id"]},
+            })
+        return hits
+

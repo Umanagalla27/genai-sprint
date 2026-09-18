@@ -1,0 +1,87 @@
+import os
+from typing import List, Dict, Any
+from groq import Groq
+
+from src.rag.chunker import RecursiveChunker
+from src.rag.embeddings import EmbeddingService
+from src.rag.vector_store import QdrantVectorStore
+
+
+class RAGService:
+    """End-to-end RAG orchestrator for document indexing, retrieval, and answer synthesis."""
+
+    def __init__(self, collection_name: str = "production_rag_docs"):
+        self.chunker = RecursiveChunker(chunk_size=300, chunk_overlap=40)
+        self.embedder = EmbeddingService()
+        self.vector_store = QdrantVectorStore(collection_name=collection_name)
+
+    def ingest_document(self, text: str, doc_id: str, metadata: Dict[str, Any] | None = None) -> int:
+        """Ingest, chunk, embed, and store document in vector DB."""
+        chunks = self.chunker.chunk_text(text, doc_id=doc_id, extra_metadata=metadata)
+        if not chunks:
+            return 0
+        vectors = self.embedder.embed_batch([c.content for c in chunks])
+        return self.vector_store.upsert_chunks(chunks, vectors)
+
+    def retrieve_context(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+        """Embed query and search vector store for top-k chunks."""
+        query_vector = self.embedder.embed_text(query)
+        return self.vector_store.search(query_vector=query_vector, limit=top_k)
+
+    def answer_query(
+        self,
+        query: str,
+        llm_client: Groq,
+        model: str = "openai/gpt-oss-20b",
+        top_k: int = 3,
+    ) -> Dict[str, Any]:
+        """Retrieve relevant context and generate a grounded answer."""
+        retrieved_chunks = self.retrieve_context(query, top_k=top_k)
+
+        if not retrieved_chunks:
+            return {
+                "query": query,
+                "answer": "No relevant documents found in the knowledge base.",
+                "sources": [],
+            }
+
+        # Build grounded context string
+        context_blocks = []
+        for i, chunk in enumerate(retrieved_chunks):
+            context_blocks.append(f"[Source {i+1} - Doc: {chunk['doc_id']} (Score: {chunk['score']:.3f})]:\n{chunk['content']}")
+        context_str = "\n\n".join(context_blocks)
+
+        system_prompt = (
+            "You are a helpful and strictly grounded technical assistant. "
+            "Answer the user's question using ONLY the provided context below. "
+            "If the answer cannot be found in the context, explicitly say: "
+            "'I do not have enough information in the provided context to answer this.' "
+            "Do not hallucinate or use outside knowledge."
+        )
+
+        user_prompt = f"Context:\n{context_str}\n\nQuestion: {query}\nAnswer:"
+
+        completion = llm_client.chat.completions.create(
+            model=model,
+            temperature=0.1,  # Low temperature for strict factual grounding
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        answer = completion.choices[0].message.content
+
+        return {
+            "query": query,
+            "answer": answer,
+            "sources": [
+                {
+                    "doc_id": c["doc_id"],
+                    "chunk_id": c["chunk_id"],
+                    "score": round(c["score"], 4),
+                    "preview": c["content"][:80] + "...",
+                }
+                for c in retrieved_chunks
+            ],
+        }

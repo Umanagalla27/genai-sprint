@@ -1,26 +1,29 @@
 import os
 from contextlib import asynccontextmanager
-from typing import Dict
+from typing import Dict, Any, List, Generator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from groq import Groq, APIError
-from fastapi.responses import StreamingResponse
-from typing import Generator
+from src.rag.service import RAGService
 
 load_dotenv()
 
 client: Groq | None = None
+rag_service: RAGService | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client
+    global client, rag_service
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError("GROQ_API_KEY environment variable is not set.")
     client = Groq(api_key=api_key)
     print("INFO: Groq client initialized successfully.")
+    rag_service = RAGService()
+    print("INFO: RAG service initialized.")
     yield
     print("INFO: Shutting down service.")
 
@@ -48,6 +51,29 @@ class SummarizeResponse(BaseModel):
     summary: str
     model_used: str
     status: str = "success"
+
+
+class IngestRequest(BaseModel):
+    doc_id: str = Field(..., min_length=1, max_length=100)
+    text: str = Field(..., min_length=20)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class IngestResponse(BaseModel):
+    doc_id: str
+    chunks_indexed: int
+    status: str = "success"
+
+
+class RAGQueryRequest(BaseModel):
+    query: str = Field(..., min_length=3, max_length=500)
+    top_k: int = Field(default=3, ge=1, le=10)
+
+
+class RAGQueryResponse(BaseModel):
+    query: str
+    answer: str
+    sources: List[Dict[str, Any]]
 
 @app.get("/health", tags=["Monitoring"])
 def health_check() -> Dict[str, str]:
@@ -139,3 +165,20 @@ def summarize_stream(request: SummarizeRequest):
         stream_llm_tokens(request.topic, request.model),
         media_type="text/event-stream"
     )
+
+
+@app.post("/rag/ingest", response_model=IngestResponse, tags=["RAG"])
+def ingest_document(req: IngestRequest) -> IngestResponse:
+    if rag_service is None:
+        raise HTTPException(status_code=500, detail="RAG service not initialized")
+    count = rag_service.ingest_document(req.text, req.doc_id, req.metadata)
+    return IngestResponse(doc_id=req.doc_id, chunks_indexed=count)
+
+
+@app.post("/rag/query", response_model=RAGQueryResponse, tags=["RAG"])
+def query_rag(req: RAGQueryRequest) -> RAGQueryResponse:
+    if rag_service is None or client is None:
+        raise HTTPException(status_code=500, detail="Services not initialized")
+    result = rag_service.answer_query(req.query, llm_client=client, top_k=req.top_k)
+    return RAGQueryResponse(**result)
+
