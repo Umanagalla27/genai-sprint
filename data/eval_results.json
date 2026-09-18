@@ -1,0 +1,44 @@
+{
+  "summary": {
+    "avg_faithfulness": 0.9,
+    "avg_relevance": 0.96,
+    "total_queries": 5
+  },
+  "details": [
+    {
+      "id": "q1",
+      "question": "What is the core bottleneck of recurrent neural ne...",
+      "faithfulness": 1.0,
+      "relevance": 1.0,
+      "sources_found": 3
+    },
+    {
+      "id": "q2",
+      "question": "What prevents vanishing gradients in deep transfor...",
+      "faithfulness": 1.0,
+      "relevance": 0.95,
+      "sources_found": 3
+    },
+    {
+      "id": "q3",
+      "question": "What is the purpose of Reciprocal Rank Fusion in s...",
+      "faithfulness": 0.5,
+      "relevance": 0.95,
+      "sources_found": 3
+    },
+    {
+      "id": "q4",
+      "question": "Why are cross-encoders used for reranking rather t...",
+      "faithfulness": 1.0,
+      "relevance": 0.95,
+      "sources_found": 3
+    },
+    {
+      "id": "q5",
+      "question": "What does temperature configure in LLM sampling?...",
+      "faithfulness": 1.0,
+      "relevance": 0.95,
+      "sources_found": 3
+    }
+  ]
+}

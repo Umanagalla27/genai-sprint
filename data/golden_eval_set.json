@@ -1,0 +1,32 @@
+[
+  {
+    "id": "q1",
+    "question": "What is the core bottleneck of recurrent neural networks that transformers resolved?",
+    "ground_truth": "RNNs process tokens sequentially, which prevents parallelization during training across sequential data.",
+    "doc_text": "The Transformer architecture was introduced in 2017. It abandoned traditional recurrent neural networks (RNNs) and convolutional neural networks in favor of self-attention. This resolved the fundamental bottleneck of RNNs: the inability to parallelize training across sequential data."
+  },
+  {
+    "id": "q2",
+    "question": "What prevents vanishing gradients in deep transformer layers?",
+    "ground_truth": "Residual connections and layer normalization placed around each sub-layer ensure stable gradient flow during backpropagation.",
+    "doc_text": "In modern LLMs, decoder-only transformer blocks are stacked dozens of times. Each layer contains Multi-Head Self-Attention followed by a Feed-Forward Network. Residual connections and layer normalization around each sub-layer ensure stable gradient flow and prevent vanishing gradients during backpropagation."
+  },
+  {
+    "id": "q3",
+    "question": "What is the purpose of Reciprocal Rank Fusion in search systems?",
+    "ground_truth": "RRF mathematically merges multiple ranked result lists (such as dense vector rankings and sparse keyword rankings) to produce a unified, optimal consensus ranking.",
+    "doc_text": "Reciprocal Rank Fusion (RRF) is a simple yet effective algorithm used in hybrid search. It merges rankings from multiple independent retrieval systems, such as BM25 sparse keyword search and dense embedding similarity, using an invariant score formula that rewards documents appearing consistently across lists."
+  },
+  {
+    "id": "q4",
+    "question": "Why are cross-encoders used for reranking rather than first-stage retrieval?",
+    "ground_truth": "Cross-encoders compute full cross-attention over all query and document token pairs simultaneously, making them highly accurate but computationally too slow for large-scale initial retrieval.",
+    "doc_text": "Bi-encoders independently embed queries and documents into vectors, allowing fast approximate nearest neighbor search over millions of items. In contrast, Cross-encoders take both query and document as a single input sequence, computing full cross-attention across all token pairs. While cross-encoders are significantly more accurate, their computational cost makes them suitable only for reranking a small candidate set."
+  },
+  {
+    "id": "q5",
+    "question": "What does temperature configure in LLM sampling?",
+    "ground_truth": "Temperature scales the logits before softmax to control the randomness of token selection, where lower values produce deterministic output and higher values produce more diverse output.",
+    "doc_text": "Temperature is a hyperparameter that scales the output logits prior to applying the softmax function in autoregressive language models. Lowering temperature towards zero sharpens the probability distribution, resulting in deterministic and reproducible token selection ideal for factual extraction."
+  }
+]

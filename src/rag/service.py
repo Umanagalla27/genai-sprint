@@ -6,6 +6,7 @@ from src.rag.chunker import RecursiveChunker
 from src.rag.embeddings import EmbeddingService
 from src.rag.vector_store import QdrantVectorStore
 from src.rag.hybrid_search import HybridSearcher
+from src.rag.reranker import RerankerService
 
 
 class RAGService:
@@ -17,6 +18,7 @@ class RAGService:
         self.vector_store = QdrantVectorStore(collection_name=collection_name)
         self.hybrid_searcher = HybridSearcher()
         self.raw_chunks_cache: List[Dict[str, Any]] = []
+        self.reranker = RerankerService()
 
     def ingest_document(self, text: str, doc_id: str, metadata: Dict[str, Any] | None = None) -> int:
         """Ingest, chunk, embed, and store document in vector DB, updating BM25 index."""
@@ -51,6 +53,20 @@ class RAGService:
         # Fuse
         return self.hybrid_searcher.fuse_rrf(dense_hits, sparse_hits, top_k=top_k)
 
+    def retrieve_and_rerank(self, query: str, initial_top_k: int = 10, final_top_k: int = 3) -> List[Dict[str, Any]]:
+        """
+        Two-stage retrieval pipeline:
+        Stage 1: Hybrid Search (Dense + BM25) retrieves top candidate pool (e.g. 10 chunks).
+        Stage 2: Cross-Encoder jointly scores candidates against query to return top_k (e.g. 3 chunks).
+        """
+        # Stage 1: Candidate retrieval
+        candidates = self.retrieve_hybrid(query, top_k=initial_top_k)
+        if not candidates:
+            return []
+
+        # Stage 2: Cross-Encoder reranking
+        return self.reranker.rerank(query=query, candidate_chunks=candidates, top_k=final_top_k)
+
     def answer_query(
         self,
         query: str,
@@ -59,19 +75,20 @@ class RAGService:
         top_k: int = 3,
     ) -> Dict[str, Any]:
         """Retrieve relevant context and generate a grounded answer."""
-        retrieved_chunks = self.retrieve_hybrid(query, top_k=top_k)
+        retrieved_chunks = self.retrieve_and_rerank(query, initial_top_k=10, final_top_k=top_k)
 
         if not retrieved_chunks:
             return {
                 "query": query,
                 "answer": "No relevant documents found in the knowledge base.",
+                "context_used": "",
                 "sources": [],
             }
 
         # Build grounded context string
         context_blocks = []
         for i, chunk in enumerate(retrieved_chunks):
-            score = chunk.get("rrf_score", chunk.get("score", 0.0))
+            score = chunk.get("rerank_score", chunk.get("rrf_score", chunk.get("score", 0.0)))
             context_blocks.append(f"[Source {i+1} - Doc: {chunk['doc_id']} (Score: {score:.3f})]:\n{chunk['content']}")
         context_str = "\n\n".join(context_blocks)
 
@@ -99,11 +116,12 @@ class RAGService:
         return {
             "query": query,
             "answer": answer,
+            "context_used": context_str,
             "sources": [
                 {
                     "doc_id": c["doc_id"],
                     "chunk_id": c["chunk_id"],
-                    "score": round(c.get("rrf_score", c.get("score", 0.0)), 4),
+                    "score": round(c.get("rerank_score", c.get("rrf_score", c.get("score", 0.0))), 4),
                     "preview": c["content"][:80] + "...",
                 }
                 for c in retrieved_chunks
