@@ -73,6 +73,7 @@ class RAGQueryRequest(BaseModel):
 class RAGQueryResponse(BaseModel):
     query: str
     answer: str
+    context_used: str = ""
     sources: List[Dict[str, Any]]
 
 @app.get("/health", tags=["Monitoring"])

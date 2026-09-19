@@ -2,7 +2,6 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any
 import re
 
-
 @dataclass
 class DocumentChunk:
     doc_id: str
