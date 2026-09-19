@@ -1,6 +1,7 @@
 import json
 from typing import List, Dict, Any, Callable
 from groq import Groq
+from src.agent.guardrails import AgentGuardrails
 
 
 class SimpleReActAgent:
@@ -20,6 +21,7 @@ class SimpleReActAgent:
         self.max_iterations = max_iterations
         self.tools: Dict[str, Callable] = {}
         self.tool_definitions: List[Dict[str, Any]] = []
+        self.guardrails = AgentGuardrails()
 
     def register_tool(self, name: str, func: Callable, schema: Dict[str, Any]) -> None:
         """Register a Python function and its OpenAPI/JSON schema."""
@@ -40,6 +42,20 @@ class SimpleReActAgent:
         2. If tool requested, execute and feed result back.
         3. Repeat until final answer or max_iterations reached.
         """
+        # --- Pre-Execution Guardrails ---
+        input_check = self.guardrails.validate_input(user_query)
+        if not input_check.is_safe:
+            return {
+                "query": user_query,
+                "final_answer": f"Request blocked by safety guardrail: {input_check.reason}",
+                "steps_taken": 0,
+                "execution_trace": [],
+                "status": "blocked_by_guardrail",
+            }
+
+        clean_query = input_check.sanitized_text
+        self.guardrails.reset_budget()
+
         messages = [
             {
                 "role": "system",
@@ -49,7 +65,7 @@ class SimpleReActAgent:
                     "Do not guess calculations."
                 ),
             },
-            {"role": "user", "content": user_query},
+            {"role": "user", "content": clean_query},
         ]
 
         steps_log: List[Dict[str, Any]] = []
@@ -58,7 +74,6 @@ class SimpleReActAgent:
         while iteration < self.max_iterations:
             iteration += 1
 
-            # Call LLM with tool definitions
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -67,23 +82,33 @@ class SimpleReActAgent:
                 temperature=0.0,
             )
 
+            # Track tokens if usage metadata exists
+            try:
+                total_tokens = getattr(getattr(response, "usage", None), "total_tokens", None)
+                if isinstance(total_tokens, int):
+                    within_budget = self.guardrails.track_tokens(total_tokens)
+                    if not within_budget:
+                        return {
+                            "query": clean_query,
+                            "final_answer": "Circuit breaker tripped: Maximum token budget exceeded.",
+                            "steps_taken": len(steps_log),
+                            "execution_trace": steps_log,
+                            "status": "budget_exceeded",
+                        }
+            except (TypeError, AttributeError):
+                pass
+
             message = response.choices[0].message
 
-            # Check if LLM wants to call a tool
             if message.tool_calls:
-                # Add assistant message with tool calls to conversation history
                 messages.append(message)
-
                 for tool_call in message.tool_calls:
                     fn_name = tool_call.function.name
-                    fn_args_raw = tool_call.function.arguments
-
                     try:
-                        fn_args = json.loads(fn_args_raw)
+                        fn_args = json.loads(tool_call.function.arguments)
                     except json.JSONDecodeError:
                         fn_args = {}
 
-                    # Execute the local tool
                     if fn_name in self.tools:
                         try:
                             tool_result = self.tools[fn_name](**fn_args)
@@ -93,7 +118,6 @@ class SimpleReActAgent:
                     else:
                         tool_output = f"Error: Tool {fn_name} is not registered."
 
-                    # Log the reasoning step
                     steps_log.append({
                         "step": iteration,
                         "action": fn_name,
@@ -101,7 +125,6 @@ class SimpleReActAgent:
                         "observation": tool_output,
                     })
 
-                    # Append tool result to messages for the next turn
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -109,18 +132,18 @@ class SimpleReActAgent:
                         "content": tool_output,
                     })
             else:
-                # Final text answer reached
+                # --- Post-Execution Guardrails: Redact PII before returning ---
+                safe_answer = self.guardrails.redact_pii(message.content or "")
                 return {
-                    "query": user_query,
-                    "final_answer": message.content,
+                    "query": clean_query,
+                    "final_answer": safe_answer,
                     "steps_taken": len(steps_log),
                     "execution_trace": steps_log,
                     "status": "completed",
                 }
 
-        # Max iterations reached without final answer
         return {
-            "query": user_query,
+            "query": clean_query,
             "final_answer": "Circuit breaker tripped: Maximum iterations reached without resolution.",
             "steps_taken": len(steps_log),
             "execution_trace": steps_log,
