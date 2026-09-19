@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from groq import Groq, APIError
 from src.rag.service import RAGService
+from src.agent.multi_tool_agent import create_production_agent
 
 load_dotenv()
 
@@ -183,3 +184,66 @@ def query_rag(req: RAGQueryRequest) -> RAGQueryResponse:
     result = rag_service.answer_query(req.query, llm_client=client, top_k=req.top_k)
     return RAGQueryResponse(**result)
 
+
+class AgentExecutionStep(BaseModel):
+    step: int
+    action: str
+    arguments: Dict[str, Any]
+    observation: str
+
+
+class AgentRunRequest(BaseModel):
+    query: str = Field(
+        ...,
+        min_length=3,
+        max_length=1000,
+        description="Query or instruction for the autonomous agent.",
+        examples=["Calculate total cost for 15 units at $85 each with 8.5% sales tax."],
+    )
+    max_iterations: int = Field(default=6, ge=1, le=10)
+
+
+class AgentRunResponse(BaseModel):
+    query: str
+    final_answer: str
+    steps_taken: int
+    execution_trace: List[AgentExecutionStep]
+    status: str
+
+
+@app.post(
+    "/agent/run",
+    response_model=AgentRunResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Agentic AI"],
+)
+def run_agent(req: AgentRunRequest) -> AgentRunResponse:
+    """
+    Execute the Autonomous Multi-Tool Agent with ReAct reasoning,
+    circuit breakers, and input/output guardrails.
+    """
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LLM Client is not initialized.",
+        )
+
+    # Initialize agent with production toolset and requested loop limit
+    agent = create_production_agent(client=client, max_iterations=req.max_iterations)
+    result = agent.run(req.query)
+
+    return AgentRunResponse(
+        query=result["query"],
+        final_answer=result["final_answer"],
+        steps_taken=result["steps_taken"],
+        execution_trace=[
+            AgentExecutionStep(
+                step=s["step"],
+                action=s["action"],
+                arguments=s["arguments"],
+                observation=str(s["observation"]),
+            )
+            for s in result["execution_trace"]
+        ],
+        status=result["status"],
+    )
