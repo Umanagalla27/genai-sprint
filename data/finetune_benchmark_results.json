@@ -1,0 +1,13 @@
+{
+  "zero_shot_metrics": {
+    "valid_pct": 100.0,
+    "avg_prompt_tokens": 144.8,
+    "avg_latency_ms": 1102.6
+  },
+  "few_shot_metrics": {
+    "valid_pct": 100.0,
+    "avg_prompt_tokens": 233.8,
+    "avg_latency_ms": 1036.61
+  },
+  "token_savings_pct": 38.06672369546621
+}
