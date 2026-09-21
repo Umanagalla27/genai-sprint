@@ -106,4 +106,83 @@ def test_agent_run_endpoint_prompt_injection_blocked():
         assert data["steps_taken"] == 0
 
 
+def test_llmops_compile_and_cache_stats():
+    """Verify /llmops/compile with cache miss -> cache hit flow, and /llmops/cache/stats."""
+    mock_choice = MagicMock()
+    mock_choice.message.content = '{"category": "running shoes", "brand": "Nike", "price_max": 120.0, "in_stock": true}'
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_response.usage.prompt_tokens = 60
+    mock_response.usage.completion_tokens = 25
+
+    with patch("src.app.Groq") as MockGroq:
+        mock_client_instance = MagicMock()
+        mock_client_instance.chat.completions.create.return_value = mock_response
+        MockGroq.return_value = mock_client_instance
+
+        with TestClient(app) as test_client:
+            # 1. Initial compile request -> Cache Miss
+            res1 = test_client.post(
+                "/llmops/compile",
+                json={
+                    "query": "Show running shoes from Nike under $120 that are in stock",
+                    "use_cache": True,
+                },
+            )
+            assert res1.status_code == 200
+            data1 = res1.json()
+            assert data1["cache_hit"] is False
+            assert data1["compiled_filter"]["brand"] == "Nike"
+            assert data1["cost_usd"] > 0.0
+
+            # 2. Semantically similar request -> Cache Hit
+            res2 = test_client.post(
+                "/llmops/compile",
+                json={
+                    "query": "Find in-stock Nike running shoes under 120 dollars",
+                    "use_cache": True,
+                },
+            )
+            assert res2.status_code == 200
+            data2 = res2.json()
+            assert data2["cache_hit"] is True
+            assert data2["cost_usd"] == 0.0
+            assert data2["model_used"] == "semantic-cache"
+            assert data2["compiled_filter"]["brand"] == "Nike"
+
+            # 3. Cache telemetry stats
+            stats_res = test_client.get("/llmops/cache/stats")
+            assert stats_res.status_code == 200
+            stats_data = stats_res.json()
+            assert stats_data["total_lookups"] >= 2
+            assert stats_data["hits"] >= 1
+            assert stats_data["misses"] >= 1
+
+
+def test_compile_endpoint_cache_lifecycle():
+    with TestClient(app) as test_client:
+        # Check initial stats
+        stats_resp = test_client.get("/llmops/cache/stats")
+        assert stats_resp.status_code == 200
+
+        # Query 1: Cache Miss
+        payload = {"query": "Find cheap laptops under 500 dollars", "use_cache": True}
+        res1 = test_client.post("/llmops/compile", json=payload)
+        assert res1.status_code == 200
+        data1 = res1.json()
+        assert data1["cache_hit"] is False
+        assert data1["cost_usd"] > 0.0
+
+        # Query 2: Similar query -> Cache Hit
+        payload_similar = {"query": "Search cheap laptops below 500", "use_cache": True}
+        res2 = test_client.post("/llmops/compile", json=payload_similar)
+        assert res2.status_code == 200
+        data2 = res2.json()
+        assert data2["cache_hit"] is True
+        assert data2["cost_usd"] == 0.0
+        assert data2["model_used"] == "semantic-cache"
+
+
+
+
 
